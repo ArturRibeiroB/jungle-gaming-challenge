@@ -29,7 +29,7 @@ services:
       - ./docker/localstack/init-sqs.sh:/etc/localstack/init/ready.d/init-sqs.sh:ro
     healthcheck:
       # Só fica healthy depois que o script de init criou as filas.
-      test: ["CMD-SHELL", "awslocal sqs get-queue-url --queue-name wager-transactions.fifo"]
+      test: ["CMD-SHELL", "awslocal sqs get-queue-url --queue-name wagering-events.fifo"]
       interval: 2s
       timeout: 5s
       retries: 30
@@ -45,16 +45,20 @@ services:
       AWS_SECRET_ACCESS_KEY: test
       SQS_QUEUE_NAME: wager-transactions.fifo
       SQS_DLQ_NAME: wager-transactions-dlq.fifo
+      SQS_EVENTS_QUEUE_NAME: wagering-events.fifo
     depends_on:
       postgres:
         condition: service_healthy
     restart: "no"
 
-  app:
+  # API HTTP + workers (consumidor SQS, publicador da outbox, referências pendentes).
+  app: &app
     build: .
+    init: true
     environment:
       <<: *app-env
       PORT: "3000"
+      WORKERS_ENABLED: "true"
     ports:
       - "3000:3000"
     depends_on:
@@ -67,7 +71,17 @@ services:
       interval: 3s
       timeout: 3s
       retries: 20
+    # SIGTERM -> para de buscar mensagens, conclui as que estão em andamento, devolve o resto.
     stop_grace_period: 30s
+
+  # Instâncias extras da mesma imagem, sem porta publicada: com o app, são 3 instâncias
+  # disputando a mesma fila, a mesma outbox e as mesmas wallets.
+  # Mais instâncias: docker compose up -d --scale worker=4
+  worker:
+    <<: *app
+    ports: []
+    deploy:
+      replicas: 2
 
 volumes:
   postgres-data:

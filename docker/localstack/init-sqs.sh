@@ -22,4 +22,10 @@ awslocal sqs create-queue \
   --queue-name "$QUEUE_NAME" \
   --attributes "{\"FifoQueue\":\"true\",\"VisibilityTimeout\":\"30\",\"RedrivePolicy\":\"{\\\"deadLetterTargetArn\\\":\\\"$DLQ_ARN\\\",\\\"maxReceiveCount\\\":\\\"$MAX_RECEIVE_COUNT\\\"}\"}"
 
-echo "SQS queues ready: $QUEUE_NAME -> $DLQ_NAME (maxReceiveCount=$MAX_RECEIVE_COUNT)"
+# Destino dos eventos de integração publicados pela outbox.
+awslocal sqs create-queue \
+  --region "$REGION" \
+  --queue-name "wagering-events.fifo" \
+  --attributes '{"FifoQueue":"true"}'
+
+echo "SQS queues ready: $QUEUE_NAME -> $DLQ_NAME (maxReceiveCount=$MAX_RECEIVE_COUNT), wagering-events.fifo"

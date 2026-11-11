@@ -10,7 +10,10 @@ import { ReferenceRetryPolicy } from './domain/reference-retry-policy';
 import { WagerSettlement } from './domain/wager-settlement';
 import { MikroOrmWageringStore } from './infrastructure/database/mikro-orm-wagering-store';
 import { createOrmConfig } from './infrastructure/database/mikro-orm.config';
+import { OutboxPublisher } from './infrastructure/messaging/outbox-publisher';
 import { SqsModule } from './infrastructure/messaging/sqs.module';
+import { PendingReferenceWorker } from './infrastructure/workers/pending-reference.worker';
+import { WagerTransactionConsumer } from './interfaces/messaging/wager-transaction.consumer';
 import { ConfigModule } from './config/config.module';
 import { HttpExceptionFilter } from './interfaces/http/exception.filter';
 import { HealthController } from './interfaces/http/health.controller';
@@ -40,9 +43,19 @@ export class AppModule {
         Metrics,
         ProviderAuthGuard,
         { provide: WageringStore, useClass: MikroOrmWageringStore },
-        { provide: WagerSettlement, useFactory: () => new WagerSettlement(new ReferenceRetryPolicy()) },
+        {
+          provide: WagerSettlement,
+          inject: [AppConfig],
+          useFactory: (appConfig: AppConfig) =>
+            new WagerSettlement(
+              new ReferenceRetryPolicy(appConfig.workers.referenceRetryMaxAttempts, appConfig.workers.referenceRetryBaseDelayMs),
+            ),
+        },
         WalletService,
         WagerTransactionService,
+        WagerTransactionConsumer,
+        OutboxPublisher,
+        PendingReferenceWorker,
         { provide: APP_FILTER, useClass: HttpExceptionFilter },
       ],
     };

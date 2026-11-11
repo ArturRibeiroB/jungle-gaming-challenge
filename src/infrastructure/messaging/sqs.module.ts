@@ -1,5 +1,5 @@
 import { Global, Inject, Injectable, Module, type OnApplicationShutdown } from '@nestjs/common';
-import { GetQueueUrlCommand, SQSClient } from '@aws-sdk/client-sqs';
+import { GetQueueAttributesCommand, GetQueueUrlCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { AppConfig } from '../../config/app-config';
 
 /** Resolve e memoriza as URLs das filas configuradas. */
@@ -18,6 +18,20 @@ export class SqsQueues implements OnApplicationShutdown {
 
   deadLetterQueueUrl(signal?: AbortSignal): Promise<string> {
     return this.urlFor(this.config.sqs.dlqName, signal);
+  }
+
+  eventsQueueUrl(signal?: AbortSignal): Promise<string> {
+    return this.urlFor(this.config.sqs.eventsQueueName, signal);
+  }
+
+  /** Chamada real ao SQS para cada fila (as URLs ficam em cache, então só resolvê-las não prova nada). */
+  async ping(signal?: AbortSignal): Promise<void> {
+    const urls = await Promise.all([this.mainQueueUrl(signal), this.deadLetterQueueUrl(signal), this.eventsQueueUrl(signal)]);
+    await Promise.all(
+      urls.map((url) =>
+        this.client.send(new GetQueueAttributesCommand({ QueueUrl: url, AttributeNames: ['QueueArn'] }), { abortSignal: signal }),
+      ),
+    );
   }
 
   onApplicationShutdown(): void {

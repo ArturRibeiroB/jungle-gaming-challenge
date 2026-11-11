@@ -1,7 +1,7 @@
 import type { FailureCode } from '../../domain/failure-code';
 import { InboxMessage } from '../../domain/inbox-message';
 import { Money } from '../../domain/money';
-import type { OutboxMessage } from '../../domain/outbox-message';
+import { OutboxMessage } from '../../domain/outbox-message';
 import { WagerTransaction, type WagerTransactionKind, type WagerTransactionStatus } from '../../domain/wager-transaction';
 import { Wallet } from '../../domain/wallet';
 import { WalletLedgerEntry, type LedgerDirection } from '../../domain/wallet-ledger-entry';
@@ -161,6 +161,19 @@ export function inboxToRecord(message: InboxMessage): InboxMessageRecord {
     receivedAt: message.receivedAt,
     processedAt: toNullable(message.processedAt),
   };
+}
+
+export function outboxFromRecord(record: OutboxMessageRecord): OutboxMessage {
+  return OutboxMessage.rehydrate({
+    id: record.id,
+    aggregateId: record.aggregateId,
+    eventType: record.eventType,
+    payload: record.payload,
+    occurredAt: record.occurredAt,
+    attempts: record.attempts,
+    nextAttemptAt: record.nextAttemptAt,
+    publishedAt: fromNullable(record.publishedAt),
+  });
 }
 
 export function outboxToRecord(message: OutboxMessage): OutboxMessageRecord {

@@ -38,7 +38,7 @@ export class HealthController {
   private async checkSqs(): Promise<CheckResult> {
     try {
       const signal = AbortSignal.timeout(DEPENDENCY_TIMEOUT_MS);
-      await Promise.all([this.queues.mainQueueUrl(signal), this.queues.deadLetterQueueUrl(signal)]);
+      await this.queues.ping(signal);
       return { status: 'up' };
     } catch (error) {
       return { status: 'down', reason: error instanceof Error ? error.message : String(error) };

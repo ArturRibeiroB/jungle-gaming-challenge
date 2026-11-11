@@ -14,6 +14,7 @@ import {
   type LedgerPage,
   type LedgerRepository,
   type OutboxRepository,
+  type OutboxStats,
   type ReconciliationSnapshot,
   type WagerTransactionRepository,
   type WageringUnitOfWork,
@@ -30,6 +31,7 @@ import {
   ledgerEntryFromRecord,
   ledgerEntryToRecord,
   moneyFromNumeric,
+  outboxFromRecord,
   outboxToRecord,
   transactionFromRecord,
   transactionToRecord,
@@ -166,6 +168,15 @@ class MikroOrmWagerTransactionRepository implements WagerTransactionRepository {
     return count > 0;
   }
 
+  async findDuePendingReferences(now: Date, limit: number): Promise<{ id: string; walletId: string }[]> {
+    const records = await this.em.find(
+      WagerTransactionRecord,
+      { status: WagerTransactionStatus.PendingReference, nextReferenceAttemptAt: { $lte: now } },
+      { fields: ['id', 'walletId'], orderBy: { nextReferenceAttemptAt: 'asc' }, limit },
+    );
+    return records.map((record) => ({ id: record.id, walletId: record.walletId }));
+  }
+
   add(transaction: WagerTransaction): void {
     const record = this.em.create(WagerTransactionRecord, transactionToRecord(transaction, transaction.createdAt));
     this.records.set(transaction.id, record);
@@ -249,10 +260,42 @@ class MikroOrmInboxRepository implements InboxRepository {
 }
 
 class MikroOrmOutboxRepository implements OutboxRepository {
+  private readonly records = new Map<string, OutboxMessageRecord>();
+
   constructor(private readonly em: EntityManager) {}
 
   add(message: OutboxMessage): void {
     this.em.persist(this.em.create(OutboxMessageRecord, outboxToRecord(message)));
+  }
+
+  async claimDue(now: Date, limit: number): Promise<OutboxMessage[]> {
+    const records = await this.em.find(
+      OutboxMessageRecord,
+      { publishedAt: null, nextAttemptAt: { $lte: now } },
+      { orderBy: { occurredAt: 'asc', id: 'asc' }, limit, lockMode: LockMode.PESSIMISTIC_PARTIAL_WRITE },
+    );
+    return records.map((record) => {
+      this.records.set(record.id, record);
+      return outboxFromRecord(record);
+    });
+  }
+
+  save(message: OutboxMessage, lastError?: string): void {
+    const record = this.records.get(message.id);
+    if (!record) {
+      throw new Error(`Outbox message ${message.id} was not claimed in this unit of work`);
+    }
+    record.attempts = message.attempts;
+    record.nextAttemptAt = message.nextAttemptAt ?? record.nextAttemptAt;
+    record.publishedAt = message.publishedAt ?? null;
+    record.lastError = lastError === undefined ? record.lastError : lastError.slice(0, 1000);
+  }
+
+  async stats(): Promise<OutboxStats> {
+    const [row] = await this.em.execute<{ pending: number; oldest: Date | null }[]>(
+      'select count(*)::int as pending, min(occurred_at) as oldest from outbox_messages where published_at is null',
+    );
+    return { pending: row?.pending ?? 0, oldestPendingAt: row?.oldest ? new Date(row.oldest) : undefined };
   }
 }
 

@@ -28,6 +28,8 @@ export interface WagerTransactionRepository {
   findByExternalId(providerId: string, externalTransactionId: string): Promise<WagerTransaction | undefined>;
   /** Existe REFUND ou ROLLBACK PROCESSED apontando para esta transação? */
   hasProcessedReversal(referenceTransactionId: string): Promise<boolean>;
+  /** Transações PENDING_REFERENCE cuja próxima verificação já venceu. */
+  findDuePendingReferences(now: Date, limit: number): Promise<{ id: string; walletId: string }[]>;
   add(transaction: WagerTransaction): void;
   save(transaction: WagerTransaction): void;
 }
@@ -57,8 +59,21 @@ export interface InboxRepository {
   add(message: InboxMessage): void;
 }
 
+export interface OutboxStats {
+  pending: number;
+  oldestPendingAt: Date | undefined;
+}
+
 export interface OutboxRepository {
   add(message: OutboxMessage): void;
+  /**
+   * Trava e devolve até `limit` eventos pendentes e vencidos, do mais antigo para o mais novo.
+   * Linhas já travadas por outro publisher são puladas (SKIP LOCKED), então publishers
+   * concorrentes nunca pegam o mesmo evento ao mesmo tempo.
+   */
+  claimDue(now: Date, limit: number): Promise<OutboxMessage[]>;
+  save(message: OutboxMessage, lastError?: string): void;
+  stats(): Promise<OutboxStats>;
 }
 
 export interface WageringUnitOfWork {

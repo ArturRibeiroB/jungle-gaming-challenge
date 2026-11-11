@@ -4,7 +4,7 @@ import { InboxMessage } from '../domain/inbox-message';
 import { Money } from '../domain/money';
 import { OutboxMessage } from '../domain/outbox-message';
 import { WagerSettlement } from '../domain/wager-settlement';
-import { WagerTransaction, type WagerTransactionKind } from '../domain/wager-transaction';
+import { WagerTransaction, WagerTransactionStatus, type WagerTransactionKind } from '../domain/wager-transaction';
 import type { Wallet } from '../domain/wallet';
 import { Logger } from '../observability/logger';
 import { Metrics } from '../observability/metrics';
@@ -118,6 +118,56 @@ export class WagerTransactionService {
         }
       }
     });
+  }
+
+  /**
+   * Reavalia uma transação PENDING_REFERENCE (chamado pelo worker agendado).
+   * Trava a wallet antes de reler a transação: se duas instâncias pegarem a mesma, a segunda
+   * encontra o status já alterado (ou a próxima tentativa no futuro) e não faz nada.
+   */
+  async retryPendingReference(transactionId: string, walletId: string): Promise<WagerTransactionStatus | undefined> {
+    const result = await this.store.transaction(async (uow) => {
+      const wallet = await uow.wallets.lockById(walletId);
+      const tx = await uow.transactions.findById(transactionId);
+      const now = new Date();
+      if (
+        !wallet ||
+        !tx ||
+        tx.status !== WagerTransactionStatus.PendingReference ||
+        (tx.nextReferenceAttemptAt !== undefined && tx.nextReferenceAttemptAt > now)
+      ) {
+        return undefined;
+      }
+
+      const reference = await uow.transactions.findByExternalId(tx.providerId, tx.referenceExternalTransactionId!);
+      const referenceAlreadyReversed =
+        reference !== undefined && tx.isReversal() ? await uow.transactions.hasProcessedReversal(reference.id) : false;
+      const { ledgerEntry } = this.settlement.settle({ transaction: tx, wallet, reference, referenceAlreadyReversed, now });
+
+      uow.transactions.save(tx);
+      if (ledgerEntry) {
+        uow.ledger.append(ledgerEntry);
+        uow.wallets.save(wallet);
+      }
+      const ctx = { correlationId: tx.idempotencyKey, causationId: tx.id, occurredAt: now };
+      for (const event of eventsForSettlement(tx, wallet, ledgerEntry, ctx, false)) {
+        uow.outbox.add(OutboxMessage.enqueue(event));
+      }
+      return { status: tx.status, kind: tx.kind, failureCode: tx.failureCode, attempts: tx.referenceAttempts };
+    });
+
+    if (!result) {
+      return undefined;
+    }
+    const fields = { transactionId, walletId, status: result.status, attempts: result.attempts };
+    if (result.status === WagerTransactionStatus.PendingReference) {
+      this.metrics.increment('wagering_retries_total', { reason: 'pending_reference' });
+      this.logger.debug('Reference still missing', fields);
+    } else {
+      this.metrics.increment('wagering_transactions_total', { status: result.status, kind: result.kind });
+      this.logger.info('Pending reference resolved', { ...fields, failureCode: result.failureCode });
+    }
+    return result.status;
   }
 
   async getById(transactionId: string): Promise<TransactionView> {

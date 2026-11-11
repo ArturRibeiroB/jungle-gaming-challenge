@@ -8,8 +8,10 @@
     "typecheck": "bun check",
     "migrate": "bun src/infrastructure/database/migrate.ts up",
     "migrate:down": "bun src/infrastructure/database/migrate.ts down",
+    "test": "bun run test:unit && bun run test:integration",
     "test:unit": "bun test test/unit",
-    "test:integration": "bun test test/integration --timeout 60000"
+    "test:integration": "bun test test/integration --timeout 90000",
+    "test:concurrency": "bun test test/integration/concurrency.test.ts test/integration/recovery.test.ts --timeout 90000"
   },
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.1166.0",
