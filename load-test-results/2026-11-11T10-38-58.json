@@ -1,0 +1,116 @@
+{
+  "env": {
+    "cpu": "AMD Ryzen 5 4600G with Radeon Graphics (12 threads)",
+    "memoryGb": 15.31,
+    "os": "linux 6.6.87.2-microsoft-standard-WSL2",
+    "bun": "1.4.4",
+    "docker": "n/a (gerador rodando dentro de um container)",
+    "instances": 3,
+    "client": "compose",
+    "concurrency": 32,
+    "durationS": 20,
+    "wallets": 100,
+    "sqsMessages": 2000
+  },
+  "results": [
+    {
+      "name": "http-distributed",
+      "description": "32 clientes concorrentes por 20s, 100 wallets, 80% BET / 20% WIN de 1.00, 5% reenvios, round-robin nas instâncias",
+      "requests": 3785,
+      "durationS": 20.16,
+      "throughput": 187.71,
+      "latencyMs": {
+        "p50": 153.1,
+        "p95": 326.42,
+        "p99": 485,
+        "max": 758.51
+      },
+      "statuses": {
+        "200": 3785
+      },
+      "errorRate": 0,
+      "outbox": {
+        "maxLagS": 0.9,
+        "p95LagS": 0.74,
+        "maxPending": 278,
+        "drainS": 0.1
+      },
+      "notes": [
+        "185 reenvios idênticos, 185 responderam idempotentReplay=true"
+      ]
+    },
+    {
+      "name": "http-hot-wallet",
+      "description": "32 clientes concorrentes por 10s, todos na MESMA wallet (pior caso do lock por wallet)",
+      "requests": 655,
+      "durationS": 10.39,
+      "throughput": 63.04,
+      "latencyMs": {
+        "p50": 515.44,
+        "p95": 688.99,
+        "p99": 757.01,
+        "max": 831.86
+      },
+      "statuses": {
+        "200": 655
+      },
+      "errorRate": 0,
+      "outbox": {
+        "maxLagS": 0.73,
+        "p95LagS": 0.48,
+        "maxPending": 86,
+        "drainS": 0
+      },
+      "notes": [
+        "33 reenvios idênticos, 33 responderam idempotentReplay=true"
+      ]
+    },
+    {
+      "name": "sqs-throughput",
+      "description": "2000 mensagens BET 1.00 em 100 wallets (grupo FIFO = wallet), consumidas pelas instâncias",
+      "requests": 2000,
+      "durationS": 22.5,
+      "throughput": 88.89,
+      "latencyMs": {
+        "p50": 10670,
+        "p95": 19134,
+        "p99": 19844,
+        "max": 20010
+      },
+      "statuses": {
+        "200": 2000
+      },
+      "errorRate": 0,
+      "outbox": {
+        "maxLagS": 1.02,
+        "p95LagS": 0.77,
+        "maxPending": 234,
+        "drainS": 0.4
+      },
+      "notes": [
+        "enfileiramento levou 2.48 s; latência = envio à fila -> commit (inclui espera na fila)",
+        "todas as mensagens processadas"
+      ]
+    }
+  ],
+  "counters": {
+    "invariant": {
+      "checked": 101,
+      "inconsistent": 0
+    },
+    "lockConflicts": {},
+    "retries": {},
+    "duplicates": {
+      "wagering_duplicates_total{source=\"http\"}": 218
+    },
+    "idempotencyConflicts": {},
+    "sqsMessages": {
+      "sqs_messages_total{result=\"processed\"}": 2000
+    },
+    "dlq": {},
+    "outboxPublished": {
+      "outbox_published_total": 12545
+    },
+    "outboxFailures": {}
+  }
+}

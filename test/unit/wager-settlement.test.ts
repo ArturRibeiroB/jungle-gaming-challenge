@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
+import type { Money } from '../../src/domain/money';
 import { InvalidTransactionStateError } from '../../src/domain/errors';
 import { FailureCode } from '../../src/domain/failure-code';
 import { newId } from '../../src/domain/id';
@@ -6,14 +7,39 @@ import { ReferenceRetryPolicy } from '../../src/domain/reference-retry-policy';
 import { WagerSettlement } from '../../src/domain/wager-settlement';
 import { WagerTransactionKind as Kind, WagerTransactionStatus as Status, type WagerTransaction } from '../../src/domain/wager-transaction';
 import type { Wallet } from '../../src/domain/wallet';
-import { LedgerDirection } from '../../src/domain/wallet-ledger-entry';
+import { LedgerDirection, type WalletLedgerEntry } from '../../src/domain/wallet-ledger-entry';
 import { T0, openWallet, usd, wager } from '../support/builders';
 
 const settlement = new WagerSettlement(new ReferenceRetryPolicy(2, 1_000, 60_000));
 
+/**
+ * Ledger em memória de cada wallet tocada no teste: saldo de abertura + lançamentos gerados.
+ * Depois de cada teste vale a invariante final: wallet.balance == saldo reconstruído pelo ledger.
+ */
+const ledgers = new Map<Wallet, { opening: Money; entries: WalletLedgerEntry[] }>();
+
 function settle(wallet: Wallet, transaction: WagerTransaction, reference?: WagerTransaction, referenceAlreadyReversed = false) {
-  return settlement.settle({ transaction, wallet, reference, referenceAlreadyReversed, now: T0 });
+  const ledger = ledgers.get(wallet) ?? { opening: wallet.balance, entries: [] };
+  ledgers.set(wallet, ledger);
+  const result = settlement.settle({ transaction, wallet, reference, referenceAlreadyReversed, now: T0 });
+  if (result.ledgerEntry) {
+    ledger.entries.push(result.ledgerEntry);
+  }
+  return result;
 }
+
+afterEach(() => {
+  for (const [wallet, { opening, entries }] of ledgers) {
+    const rebuilt = entries.reduce((sum, entry) => sum.add(entry.signedAmount()), opening);
+    expect(rebuilt.equals(wallet.balance)).toBe(true);
+    expect(wallet.version).toBe(1 + entries.length);
+    entries.forEach((entry, index) => {
+      expect(entry.isBalanced()).toBe(true);
+      expect(entry.balanceBefore.equals(index === 0 ? opening : entries[index - 1]!.balanceAfter)).toBe(true);
+    });
+  }
+  ledgers.clear();
+});
 
 /** Cria e processa uma transação, para servir de referência. */
 function processed(wallet: Wallet, kind: Kind, amount: string, overrides: Parameters<typeof wager>[3] = {}, ref?: WagerTransaction) {

@@ -1,3 +1,4 @@
+import { expect } from 'bun:test';
 import { SQL } from 'bun';
 import { MikroORM } from '@mikro-orm/postgresql';
 import { AppConfig } from '../../src/config/app-config';
@@ -37,6 +38,34 @@ export class TestDatabase {
     } finally {
       await orm.close(true);
     }
+  }
+
+  /** Wallets corrompidas de propósito (teste de reconciliação), fora da checagem final. */
+  private readonly corrupted = new Set<string>();
+
+  markCorrupted(walletId: string): void {
+    this.corrupted.add(walletId);
+  }
+
+  /**
+   * Invariante final de todos os testes de integração, checada após cada teste para TODAS
+   * as wallets do banco: saldo gravado == saldo reconstruído pelo ledger, e a versão da
+   * wallet == versão do último lançamento. Lido direto no banco, não pela API.
+   */
+  async expectLedgerInvariant(): Promise<void> {
+    const rows = await this.sql`
+      select w.id,
+             w.balance::text as balance,
+             coalesce(sum(case when l.direction = 'CREDIT' then l.amount else -l.amount end), 0)::numeric(30, 2)::text as ledger,
+             w.version,
+             coalesce(max(l.wallet_version), 1) as last_version
+        from wallets w
+        left join wallet_ledger_entries l on l.wallet_id = w.id
+       group by w.id`;
+    const broken = (rows as { id: string; balance: string; ledger: string; version: number; last_version: number }[]).filter(
+      (row) => !this.corrupted.has(row.id) && (row.balance !== row.ledger || row.version !== row.last_version),
+    );
+    expect(broken).toEqual([]);
   }
 
   async drop(): Promise<void> {

@@ -46,14 +46,6 @@ import {
   WalletRecord,
 } from './records';
 
-/**
- * Quanto uma transação espera pelo lock de uma wallet ocupada antes de desistir.
- * Uma operação normal segura o lock por poucos ms; esperar mais que isso indica wallet
- * muito disputada ou banco degradado, e é melhor devolver erro transitório (503/retry)
- * do que segurar conexões do pool.
- */
-const LOCK_TIMEOUT = '5s';
-
 /** SQLSTATEs de falha transitória: conexão (classe 08), shutdown, serialização, deadlock, lock. */
 const TRANSIENT_SQL_STATES = new Set(['40001', '40P01', '55P03', '57P01', '57P02', '57P03', '53300']);
 const TRANSIENT_NETWORK_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ENOTFOUND', 'EAI_AGAIN']);
@@ -67,10 +59,8 @@ export class MikroOrmWageringStore extends WageringStore {
   override async transaction<T>(work: (uow: WageringUnitOfWork) => Promise<T>): Promise<T> {
     try {
       // fork(): cada operação tem seu próprio Unit of Work / Identity Map, inclusive fora de requisições HTTP.
-      return await this.em.fork().transactional(async (em) => {
-        await em.execute(`set local lock_timeout = '${LOCK_TIMEOUT}'`);
-        return work(new MikroOrmUnitOfWork(em));
-      });
+      // O lock_timeout já vem configurado em cada conexão do pool (mikro-orm.config.ts).
+      return await this.em.fork().transactional((em) => work(new MikroOrmUnitOfWork(em)));
     } catch (error) {
       throw translateError(error);
     }
@@ -157,6 +147,21 @@ class MikroOrmWagerTransactionRepository implements WagerTransactionRepository {
 
   async findByExternalId(providerId: string, externalTransactionId: string): Promise<WagerTransaction | undefined> {
     return this.track(await this.em.findOne(WagerTransactionRecord, { providerId, externalTransactionId }));
+  }
+
+  async findDuplicates(
+    providerId: string,
+    idempotencyKey: string,
+    externalTransactionId: string,
+  ): Promise<{ byIdempotencyKey: WagerTransaction | undefined; byExternalId: WagerTransaction | undefined }> {
+    // Cada condição usa sua unique (provider_id, ...): no máximo duas linhas.
+    const records = await this.em.find(WagerTransactionRecord, {
+      providerId,
+      $or: [{ idempotencyKey }, { externalTransactionId }],
+    });
+    const byKey = records.find((record) => record.idempotencyKey === idempotencyKey);
+    const byExternal = records.find((record) => record.externalTransactionId === externalTransactionId);
+    return { byIdempotencyKey: this.track(byKey ?? null), byExternalId: this.track(byExternal ?? null) };
   }
 
   async hasProcessedReversal(referenceTransactionId: string): Promise<boolean> {

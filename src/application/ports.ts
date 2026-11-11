@@ -26,6 +26,12 @@ export interface WagerTransactionRepository {
   findById(id: string): Promise<WagerTransaction | undefined>;
   findByIdempotencyKey(providerId: string, idempotencyKey: string): Promise<WagerTransaction | undefined>;
   findByExternalId(providerId: string, externalTransactionId: string): Promise<WagerTransaction | undefined>;
+  /** As duas buscas de duplicata da submissão numa única consulta (pela chave e pelo id externo). */
+  findDuplicates(
+    providerId: string,
+    idempotencyKey: string,
+    externalTransactionId: string,
+  ): Promise<{ byIdempotencyKey: WagerTransaction | undefined; byExternalId: WagerTransaction | undefined }>;
   /** Existe REFUND ou ROLLBACK PROCESSED apontando para esta transação? */
   hasProcessedReversal(referenceTransactionId: string): Promise<boolean>;
   /** Transações PENDING_REFERENCE cuja próxima verificação já venceu. */

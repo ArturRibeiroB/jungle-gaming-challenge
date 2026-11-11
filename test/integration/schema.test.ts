@@ -1,6 +1,7 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import type { SQL } from 'bun';
 import { newId } from '../../src/domain/id';
+import { Money } from '../../src/domain/money';
 import { TestDatabase, expectSqlError } from '../support/database';
 
 /**
@@ -21,6 +22,9 @@ beforeAll(async () => {
   db = await TestDatabase.create();
   sql = db.sql;
 });
+
+// Invariante final: saldo == ledger para todas as wallets do banco, depois de cada teste.
+afterEach(() => db.expectLedgerInvariant());
 
 afterAll(async () => {
   await db?.drop();
@@ -94,7 +98,10 @@ async function applyMovement(
 ): Promise<string> {
   return sql.begin(async (tx) => {
     const [current] = await tx`select balance, version from wallets where id = ${wallet.walletId} for update`;
-    const after = (Number(current.balance) + (direction === 'CREDIT' ? 1 : -1) * Number(amount)).toFixed(2);
+    // Mesmo nos testes, dinheiro nunca passa por number.
+    const before = Money.from({ amount: current.balance, currency: 'BRL' });
+    const delta = Money.from({ amount, currency: 'BRL' });
+    const after = (direction === 'CREDIT' ? before.add(delta) : before.subtract(delta)).toString();
     const txId = await insertTransaction(tx, {
       walletId: wallet.walletId,
       playerId: wallet.playerId,

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import type { SQL } from 'bun';
 import { startApp, type RunningApp } from '../support/app';
 import { TestDatabase } from '../support/database';
@@ -12,9 +12,13 @@ let url: string;
 beforeAll(async () => {
   db = await TestDatabase.create();
   sql = db.sql;
-  api = await startApp(db);
+  // Lock timeout curto para o teste de wallet travada não demorar.
+  api = await startApp(db, { DATABASE_LOCK_TIMEOUT_MS: '500' });
   url = api.baseUrl;
 });
+
+// Invariante final: saldo == ledger para todas as wallets do banco, depois de cada teste.
+afterEach(() => db.expectLedgerInvariant());
 
 afterAll(async () => {
   await api?.close();
@@ -224,6 +228,30 @@ describe('POST /wagering/transactions', () => {
   });
 });
 
+describe('lock contention', () => {
+  test('a wallet locked for longer than the lock timeout answers 503 LOCK_TIMEOUT, and the retry succeeds', async () => {
+    const wallet = await createWallet(url, '100.00');
+    let blocked: Awaited<ReturnType<typeof submitWager>> | undefined;
+
+    // Outra sessão segura o lock da wallet por mais tempo que o lock_timeout (500 ms).
+    await sql.begin(async (tx) => {
+      await tx`select id from wallets where id = ${wallet.id} for update`;
+      blocked = await submitWager(url, wallet, { kind: 'BET', amount: '10.00', externalTransactionId: 'locked-1' });
+    });
+
+    expect(blocked!.status).toBe(503);
+    expect(blocked!.body.error.code).toBe('LOCK_TIMEOUT');
+    const metrics = await (await fetch(`${url}/metrics`)).text();
+    expect(metrics).toContain('wagering_lock_conflicts_total 1');
+
+    // Nada foi gravado; reenviar a mesma requisição é seguro e agora passa.
+    const retried = await submitWager(url, wallet, { kind: 'BET', amount: '10.00', externalTransactionId: 'locked-1' });
+    expect(retried.status).toBe(200);
+    expect(retried.body.idempotentReplay).toBe(false);
+    expect(await expectWalletConsistent(sql, wallet.id)).toEqual({ balance: '90.00', entries: 2 });
+  });
+});
+
 describe('atomicity', () => {
   test('if the outbox insert fails, nothing of the transaction is committed', async () => {
     const wallet = await createWallet(url, '100.00');
@@ -299,6 +327,7 @@ describe('queries', () => {
   test('reconciliation flags a divergence instead of fixing it', async () => {
     const wallet = await createWallet(url, '100.00');
     // Corrompe a wallet contornando os triggers (só um superusuário consegue; a aplicação não).
+    db.markCorrupted(wallet.id);
     await sql.begin(async (tx) => {
       await tx`set local session_replication_role = replica`;
       await tx`update wallets set balance = 150 where id = ${wallet.id}`;

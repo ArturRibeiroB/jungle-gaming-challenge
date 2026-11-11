@@ -74,14 +74,34 @@ services:
     # SIGTERM -> para de buscar mensagens, conclui as que estão em andamento, devolve o resto.
     stop_grace_period: 30s
 
-  # Instâncias extras da mesma imagem, sem porta publicada: com o app, são 3 instâncias
-  # disputando a mesma fila, a mesma outbox e as mesmas wallets.
+  # Instâncias extras da mesma imagem: com o app, são 3 instâncias disputando
+  # a mesma fila, a mesma outbox e as mesmas wallets.
   # Mais instâncias: docker compose up -d --scale worker=4
   worker:
     <<: *app
-    ports: []
+    # Porta aleatória no host (docker compose port worker 3000): permite escalar sem conflito
+    # e deixa o teste de carga alcançar a API e as métricas de cada instância.
+    ports:
+      - "3000"
     deploy:
       replicas: 2
+
+  # Gerador de carga DENTRO da rede do compose (sem o port-forwarding do host no caminho).
+  # docker compose --profile load run --rm loadtest
+  loadtest:
+    image: oven/bun:1.4-alpine
+    profiles: ["load"]
+    working_dir: /work
+    volumes:
+      - .:/work
+    command: ["bun", "test/load/load-test.ts"]
+    environment:
+      <<: *app-env
+      LOAD_TARGETS: http://jungle-wagering-app-1:3000,http://jungle-wagering-worker-1:3000,http://jungle-wagering-worker-2:3000
+      LOAD_NETWORK: compose
+    depends_on:
+      app:
+        condition: service_healthy
 
 volumes:
   postgres-data:

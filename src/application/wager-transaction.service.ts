@@ -223,14 +223,15 @@ export class WagerTransactionService {
     }
 
     // 3. Idempotência persistente: mesma chave + mesmo payload = replay; payload diferente = conflito.
-    const existing = await uow.transactions.findByIdempotencyKey(payload.providerId, idempotencyKey);
+    const duplicates = await uow.transactions.findDuplicates(payload.providerId, idempotencyKey, payload.externalTransactionId);
+    const existing = duplicates.byIdempotencyKey;
     if (existing) {
       if (!existing.matchesPayload(payloadHash)) {
         throw new IdempotencyConflictError(payload.providerId, idempotencyKey);
       }
       return replay(existing, wallet);
     }
-    if (await uow.transactions.findByExternalId(payload.providerId, payload.externalTransactionId)) {
+    if (duplicates.byExternalId) {
       throw new DuplicateExternalTransactionError(payload.providerId, payload.externalTransactionId);
     }
 

@@ -7,6 +7,8 @@ export class AppConfig {
     readonly port: number,
     readonly databaseUrl: string,
     readonly databasePoolMax: number,
+    /** Espera máxima pelo lock de uma wallet antes de responder LOCK_TIMEOUT (503). */
+    readonly databaseLockTimeoutMs: number,
     readonly aws: {
       readonly region: string;
       readonly endpoint: string | undefined;
@@ -38,6 +40,7 @@ export class AppConfig {
       integer(env, 'PORT', 3000),
       required(env, 'DATABASE_URL'),
       integer(env, 'DATABASE_POOL_MAX', 10),
+      integer(env, 'DATABASE_LOCK_TIMEOUT_MS', 5_000),
       {
         region: env.AWS_REGION ?? 'us-east-1',
         endpoint: env.AWS_ENDPOINT_URL,

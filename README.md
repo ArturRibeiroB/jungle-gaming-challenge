@@ -2,7 +2,7 @@
 
 Serviço financeiro que processa transações de apostas (`BET`, `WIN`, `LOSS`, `REFUND`, `ROLLBACK`) vindas de vários provedores, por HTTP e por SQS. Ele continua correto com mensagens duplicadas, fora de ordem, processadas em paralelo por várias instâncias, ou com o processo morrendo no meio.
 
-O enunciado está em [CHALLENGE.md](CHALLENGE.md). As decisões, trade-offs e limitações estão em [ARCHITECTURE.md](ARCHITECTURE.md).
+O enunciado está em [CHALLENGE.md](CHALLENGE.md). As decisões, trade-offs e limitações estão em [ARCHITECTURE.md](ARCHITECTURE.md), e o teste de carga, com metodologia, resultados e análise do gargalo, em [LOAD_TEST.md](LOAD_TEST.md).
 
 **Stack:** Bun 1.4 · TypeScript estrito · NestJS 11 · MikroORM 6 · PostgreSQL 17 · SQS (LocalStack) · Docker Compose.
 
@@ -45,6 +45,8 @@ bun run dev
 | `bun run test:integration` | integração com PostgreSQL e LocalStack reais (precisa de `postgres` e `localstack` no ar) |
 | `bun run test:concurrency` | só os testes de concorrência, múltiplas instâncias e crash |
 | `bun run test` | tudo |
+| `bun run test:load:compose` | teste de carga com o gerador dentro da rede do compose (precisa do ambiente completo no ar) |
+| `bun run test:load` | o mesmo teste de carga, a partir do host |
 | `bun run migrate` / `bun run migrate:down` | aplica / desfaz a última migration |
 
 Os testes de integração criam **um banco e filas exclusivos por arquivo** e apagam tudo no final; não interferem no ambiente do Compose. Os de concorrência sobem **3 processos `bun src/main.ts`** de verdade.

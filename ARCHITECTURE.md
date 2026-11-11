@@ -46,7 +46,8 @@ Toda instância roda a API e os três workers. No `docker compose` sobem três i
 
 **Estratégia transacional** (`MikroOrmWageringStore`):
 - Cada operação usa `em.fork()`, ou seja, Unit of Work e Identity Map próprios. Isso vale também fora de requisição HTTP (workers). `allowGlobalContext` fica `false`.
-- `em.transactional()` dá o flush automático no commit. Logo no início da transação roda `SET LOCAL lock_timeout = '5s'`.
+- `em.transactional()` dá o flush automático no commit. O `lock_timeout` (padrão 5 s, `DATABASE_LOCK_TIMEOUT_MS`) é configurado uma vez em cada conexão do pool (`afterCreate`), e não com um `SET LOCAL` por transação: é uma ida e volta a menos ao banco por operação.
+- Uma aposta executa 8 comandos: `BEGIN`, `SELECT … FOR UPDATE` da wallet, uma busca de duplicatas (chave **ou** id externo), INSERTs de outbox, ledger e transação, `UPDATE` da wallet e `COMMIT`.
 - As FKs são `DEFERRABLE INITIALLY DEFERRED`. Assim a ordem dos INSERTs escolhida pelo Unit of Work não importa, e a integridade é checada no commit.
 - Exceções do driver viram erros de aplicação: `UniqueViolationError` e `TransientInfrastructureError` (`LOCK_TIMEOUT`/`TRANSIENT_FAILURE`). Nenhum tipo do ORM sai da infraestrutura.
 
@@ -86,7 +87,9 @@ Por que pessimista e não otimista:
 - **Sem deadlock.** Cada transação trava exatamente uma wallet, então não existe ciclo de espera.
 - **Sem lock global.** Wallets diferentes são linhas diferentes e andam em paralelo, como mostra o teste com 10 wallets × 10 apostas.
 
-`lock_timeout = 5s`: esperar mais que isso indica wallet patologicamente disputada ou banco degradado. Nesse caso a resposta é `503 LOCK_TIMEOUT`, com retry seguro, e a métrica `wagering_lock_conflicts_total` é incrementada.
+`lock_timeout = 5s`: esperar mais que isso indica wallet patologicamente disputada ou banco degradado. Nesse caso a resposta é `503 LOCK_TIMEOUT`, com retry seguro, e a métrica `wagering_lock_conflicts_total` é incrementada (teste `lock contention`).
+
+**Custo medido** ([LOAD_TEST.md](LOAD_TEST.md)): numa wallet extremamente disputada, as operações ficam em série. Foram cerca de 65 operações/s nessa wallet, com p50 de cerca de 500 ms para 32 clientes simultâneos, e zero conflitos ou retries. Wallets diferentes escalam com o número de instâncias.
 
 **Defesa em profundidade no banco.** Mesmo que o código tivesse um bug de concorrência, o schema não deixa corromper:
 - `CHECK (balance >= 0)`;
@@ -270,5 +273,6 @@ Autenticação não pontua, e o tempo foi para correção financeira e concorrê
 - **Métricas são por instância** (o Prometheus agrega). Não há OpenTelemetry nem dashboard.
 - **Inbox e outbox crescem sem limpeza.** Em produção, um job removeria linhas publicadas ou processadas depois de um período de retenção.
 - **Autenticação** não implementada (seção 12).
-- **Não há teste de carga** (diferencial opcional).
+- **Throughput por instância limitado pelo ORM:** cerca de 100–150 tx/s por processo neste ambiente. O PostgreSQL gasta cerca de 6 ms por aposta, e o resto é CPU do MikroORM na thread JS. O sistema escala horizontalmente; a investigação completa está no [LOAD_TEST.md](LOAD_TEST.md).
+- **O consumidor SQS tem um loop de polling por instância** (até 10 mensagens em andamento), por isso consome abaixo do HTTP. Vários loops por instância seriam uma melhoria simples.
 - **LocalStack fixado na 4.4**, porque as imagens mais novas exigem auth token.

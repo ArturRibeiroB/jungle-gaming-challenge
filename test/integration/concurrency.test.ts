@@ -1,6 +1,7 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { createServer } from 'node:net';
 import type { SQL } from 'bun';
+import { Money } from '../../src/domain/money';
 import { spawnInstance, type RunningApp } from '../support/app';
 import { TestDatabase } from '../support/database';
 import { createWallet, expectWalletConsistent, submitWager, type HttpResult, type TestWallet } from '../support/http';
@@ -36,6 +37,9 @@ beforeAll(async () => {
   const ports = await Promise.all(Array.from({ length: INSTANCES }, freePort));
   instances = await Promise.all(ports.map((port) => spawnInstance(db, port)));
 }, 60_000);
+
+// Invariante final: saldo == ledger para todas as wallets do banco, depois de cada teste.
+afterEach(() => db.expectLedgerInvariant());
 
 afterAll(async () => {
   await Promise.all(instances.map((instance) => instance.close()));
@@ -110,12 +114,17 @@ describe(`concurrency across ${INSTANCES} instances`, () => {
     );
     const results = await Promise.all(operations);
 
-    const processed = results.filter((r) => r.status === 200);
-    const wins = 20;
-    const processedBets = processed.length - wins;
-    const expected = (5000 + wins * 250 - processedBets * 300) / 100;
+    // Saldo esperado a partir do que foi aceito, calculado com Money (nunca number).
+    let expected = Money.from({ amount: '50.00', currency: 'BRL' });
+    results.forEach((result, i) => {
+      if (result.status === 200) {
+        const amount = Money.from({ amount: i % 2 === 0 ? '2.50' : '3.00', currency: 'BRL' });
+        expected = i % 2 === 0 ? expected.add(amount) : expected.subtract(amount);
+      }
+    });
+    expect(results.filter((r, i) => i % 2 === 0 && r.status === 200)).toHaveLength(20);
     const { balance } = await expectWalletConsistent(sql, wallet.id);
-    expect(balance).toBe(expected.toFixed(2));
+    expect(balance).toBe(expected.toString());
   });
 
   test('different wallets are processed in parallel and independently', async () => {

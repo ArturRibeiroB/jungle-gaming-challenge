@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import type { SQL } from 'bun';
 import { startApp, type RunningApp } from '../support/app';
 import { TestDatabase } from '../support/database';
@@ -23,6 +23,9 @@ beforeAll(async () => {
   api = await startApp(db, { ...queues.env(), WORKERS_ENABLED: 'true' });
   url = api.baseUrl;
 }, 30_000);
+
+// Invariante final: saldo == ledger para todas as wallets do banco, depois de cada teste.
+afterEach(() => db.expectLedgerInvariant());
 
 afterAll(async () => {
   await api?.close();

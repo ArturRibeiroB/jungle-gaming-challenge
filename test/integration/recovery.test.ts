@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { createServer } from 'node:net';
 import type { SQL } from 'bun';
 import { NestFactory } from '@nestjs/core';
@@ -25,6 +25,9 @@ beforeAll(async () => {
   sql = db.sql;
   queues = await TestQueues.create();
 }, 30_000);
+
+// Invariante final: saldo == ledger para todas as wallets do banco, depois de cada teste.
+afterEach(() => db.expectLedgerInvariant());
 
 afterAll(async () => {
   await queues?.destroy();
